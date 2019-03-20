@@ -10,6 +10,8 @@ import dataIO as d
 from tqdm import *
 from utils import *
 
+from scipy.io import savemat
+
 '''
 Global Parameters
 '''
@@ -23,7 +25,7 @@ z_size     = 200
 leak_value = 0.2
 cube_len   = 64
 obj_ratio  = 0.7
-obj        = 'chair' 
+obj        = 'compositions' 
 
 train_sample_directory = './train_sample/'
 model_directory = './models/'
@@ -34,67 +36,68 @@ weights = {}
 def generator(z, batch_size=batch_size, phase_train=True, reuse=False):
 
     strides    = [1,2,2,2,1]
-
     with tf.variable_scope("gen", reuse=reuse):
-        z = tf.reshape(z, (batch_size, 1, 1, 1, z_size))
-        g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID")
-        g_1 = tf.contrib.layers.batch_norm(g_1, is_training=phase_train)
-        g_1 = tf.nn.relu(g_1)
+        with tf.device('/device:GPU:0'):
+            z = tf.reshape(z, (batch_size, 1, 1, 1, z_size))
+            g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID")
+            g_1 = tf.contrib.layers.batch_norm(g_1, is_training=phase_train)
+            g_1 = tf.nn.relu(g_1)
 
-        g_2 = tf.nn.conv3d_transpose(g_1, weights['wg2'], (batch_size,8,8,8,256), strides=strides, padding="SAME")
-        g_2 = tf.contrib.layers.batch_norm(g_2, is_training=phase_train)
-        g_2 = tf.nn.relu(g_2)
+            g_2 = tf.nn.conv3d_transpose(g_1, weights['wg2'], (batch_size,8,8,8,256), strides=strides, padding="SAME")
+            g_2 = tf.contrib.layers.batch_norm(g_2, is_training=phase_train)
+            g_2 = tf.nn.relu(g_2)
 
-        g_3 = tf.nn.conv3d_transpose(g_2, weights['wg3'], (batch_size,16,16,16,128), strides=strides, padding="SAME")
-        g_3 = tf.contrib.layers.batch_norm(g_3, is_training=phase_train)
-        g_3 = tf.nn.relu(g_3)
+            g_3 = tf.nn.conv3d_transpose(g_2, weights['wg3'], (batch_size,16,16,16,128), strides=strides, padding="SAME")
+            g_3 = tf.contrib.layers.batch_norm(g_3, is_training=phase_train)
+            g_3 = tf.nn.relu(g_3)
 
-        g_4 = tf.nn.conv3d_transpose(g_3, weights['wg4'], (batch_size,32,32,32,64), strides=strides, padding="SAME")
-        g_4 = tf.contrib.layers.batch_norm(g_4, is_training=phase_train)
-        g_4 = tf.nn.relu(g_4)
-        
-        g_5 = tf.nn.conv3d_transpose(g_4, weights['wg5'], (batch_size,64,64,64,1), strides=strides, padding="SAME")
-        # g_5 = tf.nn.sigmoid(g_5)
-        g_5 = tf.nn.tanh(g_5)
+            g_4 = tf.nn.conv3d_transpose(g_3, weights['wg4'], (batch_size,32,32,32,64), strides=strides, padding="SAME")
+            g_4 = tf.contrib.layers.batch_norm(g_4, is_training=phase_train)
+            g_4 = tf.nn.relu(g_4)
+            
+            g_5 = tf.nn.conv3d_transpose(g_4, weights['wg5'], (batch_size,64,64,64,1), strides=strides, padding="SAME")
+            # g_5 = tf.nn.sigmoid(g_5)
+            g_5 = tf.nn.tanh(g_5)
 
-    print g_1, 'g1'
-    print g_2, 'g2'
-    print g_3, 'g3'
-    print g_4, 'g4'
-    print g_5, 'g5'
+    print (g_1, 'g1')
+    print (g_2, 'g2')
+    print (g_3, 'g3')
+    print (g_4, 'g4')
+    print (g_5, 'g5')
     
     return g_5
 
 
 def discriminator(inputs, phase_train=True, reuse=False):
 
-    strides    = [1,2,2,2,1]
+    strides = [1,2,2,2,1]
     with tf.variable_scope("dis", reuse=reuse):
-        d_1 = tf.nn.conv3d(inputs, weights['wd1'], strides=strides, padding="SAME")
-        d_1 = tf.contrib.layers.batch_norm(d_1, is_training=phase_train)                               
-        d_1 = lrelu(d_1, leak_value)
+        with tf.device('/device:GPU:0'):
+            d_1 = tf.nn.conv3d(inputs, weights['wd1'], strides=strides, padding="SAME")
+            d_1 = tf.contrib.layers.batch_norm(d_1, is_training=phase_train)                               
+            d_1 = lrelu(d_1, leak_value)
 
-        d_2 = tf.nn.conv3d(d_1, weights['wd2'], strides=strides, padding="SAME") 
-        d_2 = tf.contrib.layers.batch_norm(d_2, is_training=phase_train)
-        d_2 = lrelu(d_2, leak_value)
-        
-        d_3 = tf.nn.conv3d(d_2, weights['wd3'], strides=strides, padding="SAME")  
-        d_3 = tf.contrib.layers.batch_norm(d_3, is_training=phase_train)
-        d_3 = lrelu(d_3, leak_value) 
+            d_2 = tf.nn.conv3d(d_1, weights['wd2'], strides=strides, padding="SAME") 
+            d_2 = tf.contrib.layers.batch_norm(d_2, is_training=phase_train)
+            d_2 = lrelu(d_2, leak_value)
+            
+            d_3 = tf.nn.conv3d(d_2, weights['wd3'], strides=strides, padding="SAME")  
+            d_3 = tf.contrib.layers.batch_norm(d_3, is_training=phase_train)
+            d_3 = lrelu(d_3, leak_value) 
 
-        d_4 = tf.nn.conv3d(d_3, weights['wd4'], strides=strides, padding="SAME")     
-        d_4 = tf.contrib.layers.batch_norm(d_4, is_training=phase_train)
-        d_4 = lrelu(d_4)
+            d_4 = tf.nn.conv3d(d_3, weights['wd4'], strides=strides, padding="SAME")     
+            d_4 = tf.contrib.layers.batch_norm(d_4, is_training=phase_train)
+            d_4 = lrelu(d_4)
 
-        d_5 = tf.nn.conv3d(d_4, weights['wd5'], strides=[1,1,1,1,1], padding="VALID")     
-        d_5_no_sigmoid = d_5
-        d_5 = tf.nn.sigmoid(d_5)
+            d_5 = tf.nn.conv3d(d_4, weights['wd5'], strides=[1,1,1,1,1], padding="VALID")     
+            d_5_no_sigmoid = d_5
+            d_5 = tf.nn.sigmoid(d_5)
 
-    print d_1, 'd1'
-    print d_2, 'd2'
-    print d_3, 'd3'
-    print d_4, 'd4'
-    print d_5, 'd5'
+    print (d_1, 'd1')
+    print (d_2, 'd2')
+    print (d_3, 'd3')
+    print (d_4, 'd4')
+    print (d_5, 'd5')
 
     return d_5, d_5_no_sigmoid
 
@@ -178,10 +181,10 @@ def trainGAN(is_dummy=False, checkpoint=None):
 
         if is_dummy:
             volumes = np.random.randint(0,2,(batch_size,cube_len,cube_len,cube_len))
-            print 'Using Dummy Data'
+            print ('Using Dummy Data')
         else:
             volumes = d.getAll(obj=obj, train=True, is_local=is_local, obj_ratio=obj_ratio)
-            print 'Using ' + obj + ' Data'
+            print ('Using ' + obj + ' Data')
         volumes = volumes[...,np.newaxis].astype(np.float)
         # volumes *= 2.0
         # volumes -= 1.0
@@ -205,17 +208,17 @@ def trainGAN(is_dummy=False, checkpoint=None):
             summary_d, discriminator_loss = sess.run([d_summary_merge,d_loss],feed_dict={z_vector:z, x_vector:x})
             summary_g, generator_loss = sess.run([summary_g_loss,g_loss],feed_dict={z_vector:z})  
             d_accuracy, n_x, n_z = sess.run([d_acc, n_p_x, n_p_z],feed_dict={z_vector:z, x_vector:x})
-            print n_x, n_z
+            print (n_x, n_z)
 
             if d_accuracy < d_thresh:
                 sess.run([optimizer_op_d],feed_dict={z_vector:z, x_vector:x})
-                print 'Discriminator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy
+                print ('Discriminator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy)
 
             sess.run([optimizer_op_g],feed_dict={z_vector:z})
-            print 'Generator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy
+            print ('Generator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy)
 
             # output generated chairs
-            if epoch % 200 == 0:
+            if epoch % 100 == 0:
                 g_objects = sess.run(net_g_test,feed_dict={z_vector:z_sample})
                 if not os.path.exists(train_sample_directory):
                     os.makedirs(train_sample_directory)
@@ -223,7 +226,9 @@ def trainGAN(is_dummy=False, checkpoint=None):
                 id_ch = np.random.randint(0, batch_size, 4)
                 for i in range(4):
                     if g_objects[id_ch[i]].max() > 0.5:
-    		            d.plotVoxelVisdom(np.squeeze(g_objects[id_ch[i]]>0.5), vis, '_'.join(map(str,[epoch,i])))          
+                        __obj = {'instance': np.squeeze(g_objects[id_ch[i]]>0.5)}
+                        savemat(train_sample_directory+'/biasfree_'+str(epoch)+'.mat', __obj, do_compression=True)
+                        d.plotVoxelVisdom(np.squeeze(g_objects[id_ch[i]]>0.5), vis, '_'.join(map(str,[epoch,i])))
             if epoch % 50 == 10:
                 if not os.path.exists(model_directory):
                     os.makedirs(model_directory)      
@@ -253,7 +258,7 @@ def testGAN(trained_model_path=None, n_batches=40):
             g_objects = sess.run(net_g_test,feed_dict={z_vector:z_sample})
             id_ch = np.random.randint(0, batch_size, 4)
             for i in range(4):
-                print g_objects[id_ch[i]].max(), g_objects[id_ch[i]].min(), g_objects[id_ch[i]].shape
+                print (g_objects[id_ch[i]].max(), g_objects[id_ch[i]].min(), g_objects[id_ch[i]].shape)
                 if g_objects[id_ch[i]].max() > 0.5:
                     d.plotVoxelVisdom(np.squeeze(g_objects[id_ch[i]]>0.5), vis, '_'.join(map(str,[i])))
 
