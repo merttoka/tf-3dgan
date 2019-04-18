@@ -56,6 +56,10 @@ coverage.xml
 *.mo
 *.pot
 
+#crap
+src/train_sample/
+*.data-00000-of-00001
+
 # Django stuff:
 *.log
 local_settings.py
@@ -96,3 +100,5 @@ ENV/
 .ropeproject
 
 settings.json
+
+

@@ -3,8 +3,15 @@ import os
 import sys
 import visdom
 
+# import tensorflow.keras
+# from tensorflow.keras import backend as K
+
 import numpy as np
+
 import tensorflow as tf
+from tensorflow.python.tools import freeze_graph
+from tensorflow.python.tools import optimize_for_inference_lib
+
 import dataIO as d
 
 from tqdm import *
@@ -25,7 +32,7 @@ z_size     = 200
 leak_value = 0.2
 cube_len   = 64
 obj_ratio  = 0.7
-obj        = 'compositions' 
+obj        = 'person' 
 
 train_sample_directory = './train_sample/'
 model_directory = './models/'
@@ -57,7 +64,7 @@ def generator(z, batch_size=batch_size, phase_train=True, reuse=False):
             
             g_5 = tf.nn.conv3d_transpose(g_4, weights['wg5'], (batch_size,64,64,64,1), strides=strides, padding="SAME")
             # g_5 = tf.nn.sigmoid(g_5)
-            g_5 = tf.nn.tanh(g_5)
+            g_5 = tf.nn.tanh(g_5, name = "gen_tanh")
 
     print (g_1, 'g1')
     print (g_2, 'g2')
@@ -120,12 +127,42 @@ def initialiseWeights():
 
     return weights
 
+########################################################################################################################
+# Export the frozen graph for later use in Unity
+
+def export_model(saver, sess, input_node_names, output_node_name):
+    model_name = "3dgan"
+    if not os.path.exists('out'):
+        os.mkdir('out')
+
+    tf.train.write_graph(sess.graph, 'out', model_name + '_graph.pbtxt')
+
+    saver.save(sess, 'out/' + model_name + '.chkp')
+
+    freeze_graph.freeze_graph('out/' + model_name + '_graph.pbtxt', None, False,
+                              'out/' + model_name + '.chkp', output_node_name,
+                              "save/restore_all", "save/Const:0",
+                              'out/frozen_' + model_name + '.bytes', True, "")
+
+    input_graph_def = tf.GraphDef()
+    with tf.gfile.Open('out/frozen_' + model_name + '.bytes', "rb") as f:
+        input_graph_def.ParseFromString(f.read())
+
+    output_graph_def = optimize_for_inference_lib.optimize_for_inference(
+            input_graph_def, input_node_names, [output_node_name],
+            tf.float32.as_datatype_enum)
+
+    with tf.gfile.GFile('out/opt_' + model_name + '.bytes', "wb") as f:
+        f.write(output_graph_def.SerializeToString())
+
+    print("graph saved!")
+##################################################
 
 def trainGAN(is_dummy=False, checkpoint=None):
 
     weights =  initialiseWeights()
 
-    z_vector = tf.placeholder(shape=[batch_size,z_size],dtype=tf.float32) 
+    z_vector = tf.placeholder(shape=[batch_size,z_size],dtype=tf.float32, name="input") 
     x_vector = tf.placeholder(shape=[batch_size,cube_len,cube_len,cube_len,1],dtype=tf.float32) 
 
     net_g_train = generator(z_vector, phase_train=True, reuse=False) 
@@ -148,10 +185,10 @@ def trainGAN(is_dummy=False, checkpoint=None):
     # g_loss = -tf.reduce_mean(tf.log(d_output_z))
 
     d_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=d_no_sigmoid_output_x, labels=tf.ones_like(d_output_x)) + tf.nn.sigmoid_cross_entropy_with_logits(logits=d_no_sigmoid_output_z, labels=tf.zeros_like(d_output_z))
-    g_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=d_no_sigmoid_output_z, labels=tf.ones_like(d_output_z))
+    g_loss = tf.nn.sigmoid_cross_entropy_with_logits(logits=d_no_sigmoid_output_z, labels=tf.ones_like(d_output_z), name="g_loss")
     
     d_loss = tf.reduce_mean(d_loss)
-    g_loss = tf.reduce_mean(g_loss)
+    g_loss = tf.reduce_mean(g_loss,name="g_loss_reduce")
 
     summary_d_loss = tf.summary.scalar("d_loss", d_loss)
     summary_g_loss = tf.summary.scalar("g_loss", g_loss)
@@ -167,7 +204,7 @@ def trainGAN(is_dummy=False, checkpoint=None):
     # only update the weights for the discriminator network
     optimizer_op_d = tf.train.AdamOptimizer(learning_rate=d_lr,beta1=beta).minimize(d_loss,var_list=para_d)
     # only update the weights for the generator network
-    optimizer_op_g = tf.train.AdamOptimizer(learning_rate=g_lr,beta1=beta).minimize(g_loss,var_list=para_g)
+    optimizer_op_g = tf.train.AdamOptimizer(learning_rate=g_lr,beta1=beta).minimize(g_loss,var_list=para_g, name="optimizer_gen")
 
     saver = tf.train.Saver() 
     vis = visdom.Visdom()
@@ -232,6 +269,7 @@ def trainGAN(is_dummy=False, checkpoint=None):
             if epoch % 50 == 10:
                 if not os.path.exists(model_directory):
                     os.makedirs(model_directory)      
+                export_model(saver, sess, ["input"], "g_loss")
                 saver.save(sess, save_path = model_directory + '/biasfree_' + str(epoch) + '.cptk')
 
 
