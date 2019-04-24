@@ -1,0 +1,6 @@
+model_checkpoint_path: "3dgan.chkp"
+all_model_checkpoint_paths: "..\\models\\biasfree_10.cptk"
+all_model_checkpoint_paths: "..\\models\\biasfree_1010.cptk"
+all_model_checkpoint_paths: "..\\models\\biasfree_2010.cptk"
+all_model_checkpoint_paths: "..\\models\\biasfree_3010.cptk"
+all_model_checkpoint_paths: "3dgan.chkp"

@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import os
 import sys
-import visdom
 
 # import tensorflow.keras
 # from tensorflow.keras import backend as K
@@ -11,6 +10,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.tools import freeze_graph
 from tensorflow.python.tools import optimize_for_inference_lib
+from tensorflow.python.framework.graph_util import convert_variables_to_constants
 
 import dataIO as d
 
@@ -45,8 +45,8 @@ def generator(z, batch_size=batch_size, phase_train=True, reuse=False):
     strides    = [1,2,2,2,1]
     with tf.variable_scope("gen", reuse=reuse):
         with tf.device('/device:GPU:0'):
-            z = tf.reshape(z, (batch_size, 1, 1, 1, z_size))
-            g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID")
+            z = tf.reshape(z, (batch_size, 1, 1, 1, z_size), name="init")
+            g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID", name="conv_1")
             g_1 = tf.contrib.layers.batch_norm(g_1, is_training=phase_train)
             g_1 = tf.nn.relu(g_1)
 
@@ -64,7 +64,7 @@ def generator(z, batch_size=batch_size, phase_train=True, reuse=False):
             
             g_5 = tf.nn.conv3d_transpose(g_4, weights['wg5'], (batch_size,64,64,64,1), strides=strides, padding="SAME")
             # g_5 = tf.nn.sigmoid(g_5)
-            g_5 = tf.nn.tanh(g_5, name = "gen_tanh")
+            g_5 = tf.nn.tanh(g_5, name = "tanh")
 
     print (g_1, 'g1')
     print (g_2, 'g2')
@@ -129,27 +129,34 @@ def initialiseWeights():
 
 ########################################################################################################################
 # Export the frozen graph for later use in Unity
-
 def export_model(saver, sess, input_node_names, output_node_name):
     model_name = "3dgan"
     if not os.path.exists('out'):
         os.mkdir('out')
 
-    tf.train.write_graph(sess.graph, 'out', model_name + '_graph.pbtxt')
+    # save global and local variables
+    # sess.saver = tf.train.Saver(tf.global_variables())
 
-    saver.save(sess, 'out/' + model_name + '.chkp')
+    #new write graph with weights
+    tf.train.write_graph(sess.graph_def, 'out', model_name + '_graph.pb', as_text=False)
 
-    freeze_graph.freeze_graph('out/' + model_name + '_graph.pbtxt', None, False,
-                              'out/' + model_name + '.chkp', output_node_name,
-                              "save/restore_all", "save/Const:0",
+    saver.save(sess, 'out/' + model_name + '.ckpt')
+
+    freeze_graph.freeze_graph('out/' + model_name + '_graph.pb', None, True,
+                              'out/' + model_name + '.ckpt', output_node_name,
+                              "asd", "sadas", # these two dont even used
                               'out/frozen_' + model_name + '.bytes', True, "")
 
+    # read from the frozen graph (!!Deleted devices!!)
     input_graph_def = tf.GraphDef()
     with tf.gfile.Open('out/frozen_' + model_name + '.bytes', "rb") as f:
         input_graph_def.ParseFromString(f.read())
 
+    output_graph_def = convert_variables_to_constants(sess, input_graph_def, [output_node_name])
+    # output_graph_def = convert_variables_to_constants(sess, sess.graph_def, [output_node_name])
+
     output_graph_def = optimize_for_inference_lib.optimize_for_inference(
-            input_graph_def, input_node_names, [output_node_name],
+            output_graph_def, input_node_names, [output_node_name],
             tf.float32.as_datatype_enum)
 
     with tf.gfile.GFile('out/opt_' + model_name + '.bytes', "wb") as f:
@@ -207,8 +214,6 @@ def trainGAN(is_dummy=False, checkpoint=None):
     optimizer_op_g = tf.train.AdamOptimizer(learning_rate=g_lr,beta1=beta).minimize(g_loss,var_list=para_g, name="optimizer_gen")
 
     saver = tf.train.Saver() 
-    vis = visdom.Visdom()
-
 
     with tf.Session() as sess:  
       
@@ -254,33 +259,30 @@ def trainGAN(is_dummy=False, checkpoint=None):
             sess.run([optimizer_op_g],feed_dict={z_vector:z})
             print ('Generator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy)
 
-            # output generated chairs
-            if epoch % 100 == 0:
+            if epoch % 300 == 10:
+                # output generated models
                 g_objects = sess.run(net_g_test,feed_dict={z_vector:z_sample})
                 if not os.path.exists(train_sample_directory):
                     os.makedirs(train_sample_directory)
-                g_objects.dump(train_sample_directory+'/biasfree_'+str(epoch))
-                id_ch = np.random.randint(0, batch_size, 4)
-                for i in range(4):
-                    if g_objects[id_ch[i]].max() > 0.5:
-                        __obj = {'instance': np.squeeze(g_objects[id_ch[i]]>0.5)}
-                        savemat(train_sample_directory+'/biasfree_'+str(epoch)+'.mat', __obj, do_compression=True)
-                        d.plotVoxelVisdom(np.squeeze(g_objects[id_ch[i]]>0.5), vis, '_'.join(map(str,[epoch,i])))
-            if epoch % 50 == 10:
+                # g_objects.dump(train_sample_directory+'/biasfree_'+str(epoch))
+                # save one generated file
+                if g_objects[0].max() > 0.5:
+                    __obj = {'instance': np.squeeze(g_objects[0] > 0.5)}
+                    savemat(train_sample_directory+'/biasfree_'+str(epoch)+'.mat', __obj, do_compression=True)
+
+                # save the model as .bytes file and save graph
                 if not os.path.exists(model_directory):
                     os.makedirs(model_directory)      
-                export_model(saver, sess, ["input"], "g_loss")
-                saver.save(sess, save_path = model_directory + '/biasfree_' + str(epoch) + '.cptk')
-
+                saver.save(sess, save_path = model_directory + '/biasfree_' + str(epoch) + '.ckpt')
+                export_model(saver, sess, ["gen/init"], "gen/tanh")
+                # export_model(saver, sess, ["gen/init", "gen/conv_1"], "gen/tanh")
 
 def testGAN(trained_model_path=None, n_batches=40):
 
     weights = initialiseWeights()
 
     z_vector = tf.placeholder(shape=[batch_size,z_size],dtype=tf.float32) 
-    net_g_test = generator(z_vector, phase_train=True, reuse=True)
-
-    vis = visdom.Visdom()
+    net_g_test = generator(z_vector, phase_train=False, reuse=tf.AUTO_REUSE)
 
     sess = tf.Session()
     saver = tf.train.Saver()
@@ -291,14 +293,12 @@ def testGAN(trained_model_path=None, n_batches=40):
 
         # output generated chairs
         for i in range(n_batches):
-            next_sigma = float(raw_input())
-            z_sample = np.random.normal(0, next_sigma, size=[batch_size, z_size]).astype(np.float32)
+            z_sample = np.random.normal(0, 0.33, size=[batch_size, z_size]).astype(np.float32)
             g_objects = sess.run(net_g_test,feed_dict={z_vector:z_sample})
-            id_ch = np.random.randint(0, batch_size, 4)
-            for i in range(4):
-                print (g_objects[id_ch[i]].max(), g_objects[id_ch[i]].min(), g_objects[id_ch[i]].shape)
-                if g_objects[id_ch[i]].max() > 0.5:
-                    d.plotVoxelVisdom(np.squeeze(g_objects[id_ch[i]]>0.5), vis, '_'.join(map(str,[i])))
+            
+            if g_objects[0].max() > 0.5:
+                __obj = {'instance': np.squeeze(g_objects[0] > 0.5)}
+                savemat(train_sample_directory+'/biasfree_t_'+str(i)+'.mat', __obj, do_compression=True)
 
 if __name__ == '__main__':
     test = bool(int(sys.argv[1]))
