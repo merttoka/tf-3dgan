@@ -142,7 +142,7 @@ def export_model(saver, sess, input_node_names, output_node_name):
     freeze_graph.freeze_graph('out/' + model_name + '_graph.pb', None, True,
                               'out/' + model_name + '.ckpt', output_node_name,
                               "asd", "sadas", # these two dont even used
-                              'out/frozen_' + model_name + '.bytes', False, "")
+                              'out/frozen_' + model_name + '.bytes', True, "")
 
     # read from the frozen graph (!!Deleted devices!!)
     # input_graph_def = tf.GraphDef()

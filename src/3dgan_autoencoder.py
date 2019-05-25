@@ -16,7 +16,7 @@ from utils import *
 '''
 Global Parameters
 '''
-n_epochs   = 10000
+n_epochs   = 5000
 n_ae_epochs= 1000
 batch_size = 50
 g_lr       = 0.0025
@@ -42,8 +42,7 @@ weights, biases = {}, {}
 def generator(z, batch_size=batch_size, phase_train=True, reuse=False):
 
     strides    = [1,2,2,2,1]
-
-    with tf.variable_scope("gen"):
+    with tf.variable_scope("gen", reuse=tf.AUTO_REUSE):
         with tf.device('/device:GPU:0'):
             z = tf.reshape(z, (batch_size, 1, 1, 1, z_size), name='init')
             g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID")
@@ -81,7 +80,7 @@ def generator(z, batch_size=batch_size, phase_train=True, reuse=False):
 def encoder(inputs, phase_train=True, reuse=False):
 
     strides    = [1,2,2,2,1]
-    with tf.variable_scope("enc"):
+    with tf.variable_scope("enc", reuse=tf.AUTO_REUSE):
         with tf.device('/device:GPU:0'):
             d_1 = tf.nn.conv3d(inputs, weights['wd1'], strides=strides, padding="SAME", name='init')
             d_1 = tf.nn.bias_add(d_1, biases['bd1'])
@@ -114,7 +113,7 @@ def encoder(inputs, phase_train=True, reuse=False):
 def discriminator(inputs, phase_train=True, reuse=False):
 
     strides    = [1,2,2,2,1]
-    with tf.variable_scope("dis", reuse=True):
+    with tf.variable_scope("dis", reuse=reuse):
         with tf.device('/device:GPU:0'):
             d_1 = tf.nn.conv3d(inputs, weights['wd1'], strides=strides, padding="SAME", name='input')
             d_1 = tf.nn.bias_add(d_1, biases['bd1'])
@@ -190,7 +189,7 @@ def initialiseBiases():
 ########################################################################################################################
 # Export the frozen graph for later use in Unity
 def export_model(saver, sess, input_node_names, output_node_name):
-    model_name = "3dgan"
+    model_name = obj + "_3dgan_ae_gpu"
     if not os.path.exists('out'):
         os.mkdir('out')
 
@@ -208,19 +207,19 @@ def export_model(saver, sess, input_node_names, output_node_name):
                               'out/frozen_' + model_name + '.bytes', True, "")
 
     # read from the frozen graph (!!Deleted devices!!)
-    input_graph_def = tf.GraphDef()
-    with tf.gfile.Open('out/frozen_' + model_name + '.bytes', "rb") as f:
-        input_graph_def.ParseFromString(f.read())
+    # input_graph_def = tf.GraphDef()
+    # with tf.gfile.Open('out/frozen_' + model_name + '.bytes', "rb") as f:
+    #     input_graph_def.ParseFromString(f.read())
 
-    output_graph_def = convert_variables_to_constants(sess, input_graph_def, [output_node_name])
+    # output_graph_def = convert_variables_to_constants(sess, input_graph_def, [output_node_name])
     # output_graph_def = convert_variables_to_constants(sess, sess.graph_def, [output_node_name])
 
-    output_graph_def = optimize_for_inference_lib.optimize_for_inference(
-            output_graph_def, input_node_names, [output_node_name],
-            tf.float32.as_datatype_enum)
+    # output_graph_def = optimize_for_inference_lib.optimize_for_inference(
+    #         input_graph_def, input_node_names, [output_node_name],
+    #         tf.float32.as_datatype_enum)
 
-    with tf.gfile.GFile('out/opt_' + model_name + '.bytes', "wb") as f:
-        f.write(output_graph_def.SerializeToString())
+    # with tf.gfile.GFile('out/opt_' + model_name + '.bytes', "wb") as f:
+    #     f.write(output_graph_def.SerializeToString())
 
     print("graph saved!")
 ##################################################
