@@ -2,9 +2,6 @@
 import os
 import sys
 
-# import tensorflow.keras
-# from tensorflow.keras import backend as K
-
 import numpy as np
 
 import tensorflow as tf
@@ -32,7 +29,7 @@ z_size     = 200
 leak_value = 0.2
 cube_len   = 64
 obj_ratio  = 0.7
-obj        = 'person' 
+obj        = 'stairs' 
 
 train_sample_directory = './train_sample/'
 model_directory = './models/'
@@ -46,7 +43,7 @@ def generator(z, batch_size=batch_size, phase_train=True, reuse=False):
     with tf.variable_scope("gen", reuse=reuse):
         with tf.device('/device:GPU:0'):
             z = tf.reshape(z, (batch_size, 1, 1, 1, z_size), name="init")
-            g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID", name="conv_1")
+            g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID")
             g_1 = tf.contrib.layers.batch_norm(g_1, is_training=phase_train)
             g_1 = tf.nn.relu(g_1)
 
@@ -130,7 +127,7 @@ def initialiseWeights():
 ########################################################################################################################
 # Export the frozen graph for later use in Unity
 def export_model(saver, sess, input_node_names, output_node_name):
-    model_name = "3dgan"
+    model_name = obj + "_3dgan_gpu"
     if not os.path.exists('out'):
         os.mkdir('out')
 
@@ -145,22 +142,22 @@ def export_model(saver, sess, input_node_names, output_node_name):
     freeze_graph.freeze_graph('out/' + model_name + '_graph.pb', None, True,
                               'out/' + model_name + '.ckpt', output_node_name,
                               "asd", "sadas", # these two dont even used
-                              'out/frozen_' + model_name + '.bytes', True, "")
+                              'out/frozen_' + model_name + '.bytes', False, "")
 
     # read from the frozen graph (!!Deleted devices!!)
-    input_graph_def = tf.GraphDef()
-    with tf.gfile.Open('out/frozen_' + model_name + '.bytes', "rb") as f:
-        input_graph_def.ParseFromString(f.read())
+    # input_graph_def = tf.GraphDef()
+    # with tf.gfile.Open('out/frozen_' + model_name + '.bytes', "rb") as f:
+    #     input_graph_def.ParseFromString(f.read())
 
-    output_graph_def = convert_variables_to_constants(sess, input_graph_def, [output_node_name])
+    # output_graph_def = convert_variables_to_constants(sess, input_graph_def, [output_node_name])
     # output_graph_def = convert_variables_to_constants(sess, sess.graph_def, [output_node_name])
 
-    output_graph_def = optimize_for_inference_lib.optimize_for_inference(
-            output_graph_def, input_node_names, [output_node_name],
-            tf.float32.as_datatype_enum)
+    # output_graph_def = optimize_for_inference_lib.optimize_for_inference(
+    #         input_graph_def, input_node_names, [output_node_name],
+    #         tf.float32.as_datatype_enum)
 
-    with tf.gfile.GFile('out/opt_' + model_name + '.bytes', "wb") as f:
-        f.write(output_graph_def.SerializeToString())
+    # with tf.gfile.GFile('out/opt_' + model_name + '.bytes', "wb") as f:
+    #     f.write(output_graph_def.SerializeToString())
 
     print("graph saved!")
 ##################################################
@@ -259,7 +256,7 @@ def trainGAN(is_dummy=False, checkpoint=None):
             sess.run([optimizer_op_g],feed_dict={z_vector:z})
             print ('Generator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy)
 
-            if epoch % 300 == 10:
+            if epoch % 10000 == 50:
                 # output generated models
                 g_objects = sess.run(net_g_test,feed_dict={z_vector:z_sample})
                 if not os.path.exists(train_sample_directory):
@@ -271,11 +268,10 @@ def trainGAN(is_dummy=False, checkpoint=None):
                     savemat(train_sample_directory+'/biasfree_'+str(epoch)+'.mat', __obj, do_compression=True)
 
                 # save the model as .bytes file and save graph
-                if not os.path.exists(model_directory):
-                    os.makedirs(model_directory)      
-                saver.save(sess, save_path = model_directory + '/biasfree_' + str(epoch) + '.ckpt')
+                # if not os.path.exists(model_directory):
+                #     os.makedirs(model_directory)      
+                # saver.save(sess, save_path = model_directory + '/biasfree_' + str(epoch) + '.ckpt')
                 export_model(saver, sess, ["gen/init"], "gen/tanh")
-                # export_model(saver, sess, ["gen/init", "gen/conv_1"], "gen/tanh")
 
 def testGAN(trained_model_path=None, n_batches=40):
 

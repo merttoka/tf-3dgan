@@ -4,6 +4,10 @@ import sys
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.tools import freeze_graph
+from tensorflow.python.tools import optimize_for_inference_lib
+from tensorflow.python.framework.graph_util import convert_variables_to_constants
+
 import dataIO as d
 
 from tqdm import *
@@ -25,8 +29,8 @@ leak_value = 0.2
 cube_len   = 64
 obj_ratio  = 0.5
 reg_l2     = 0.001
-gan_inter  = 50
-ae_inter   = 50
+gan_inter  = 500
+ae_inter   = 500
 obj        = 'chair' 
 
 train_sample_directory = './train_sample/'
@@ -40,68 +44,70 @@ def generator(z, batch_size=batch_size, phase_train=True, reuse=False):
     strides    = [1,2,2,2,1]
 
     with tf.variable_scope("gen"):
-        z = tf.reshape(z, (batch_size, 1, 1, 1, z_size))
-        g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID")
-        g_1 = tf.nn.bias_add(g_1, biases['bg1'])                                  
-        g_1 = tf.contrib.layers.batch_norm(g_1, is_training=phase_train)
-        g_1 = tf.nn.relu(g_1)
+        with tf.device('/device:GPU:0'):
+            z = tf.reshape(z, (batch_size, 1, 1, 1, z_size), name='init')
+            g_1 = tf.nn.conv3d_transpose(z, weights['wg1'], (batch_size,4,4,4,512), strides=[1,1,1,1,1], padding="VALID")
+            g_1 = tf.nn.bias_add(g_1, biases['bg1'])                                  
+            g_1 = tf.contrib.layers.batch_norm(g_1, is_training=phase_train)
+            g_1 = tf.nn.relu(g_1)
 
-        g_2 = tf.nn.conv3d_transpose(g_1, weights['wg2'], (batch_size,8,8,8,256), strides=strides, padding="SAME")
-        g_2 = tf.nn.bias_add(g_2, biases['bg2'])
-        g_2 = tf.contrib.layers.batch_norm(g_2, is_training=phase_train)
-        g_2 = tf.nn.relu(g_2)
+            g_2 = tf.nn.conv3d_transpose(g_1, weights['wg2'], (batch_size,8,8,8,256), strides=strides, padding="SAME")
+            g_2 = tf.nn.bias_add(g_2, biases['bg2'])
+            g_2 = tf.contrib.layers.batch_norm(g_2, is_training=phase_train)
+            g_2 = tf.nn.relu(g_2)
 
-        g_3 = tf.nn.conv3d_transpose(g_2, weights['wg3'], (batch_size,16,16,16,128), strides=strides, padding="SAME")
-        g_3 = tf.nn.bias_add(g_3, biases['bg3'])
-        g_3 = tf.contrib.layers.batch_norm(g_3, is_training=phase_train)
-        g_3 = tf.nn.relu(g_3)
+            g_3 = tf.nn.conv3d_transpose(g_2, weights['wg3'], (batch_size,16,16,16,128), strides=strides, padding="SAME")
+            g_3 = tf.nn.bias_add(g_3, biases['bg3'])
+            g_3 = tf.contrib.layers.batch_norm(g_3, is_training=phase_train)
+            g_3 = tf.nn.relu(g_3)
 
-        g_4 = tf.nn.conv3d_transpose(g_3, weights['wg4'], (batch_size,32,32,32,64), strides=strides, padding="SAME")
-        g_4 = tf.nn.bias_add(g_4, biases['bg4'])
-        g_4 = tf.contrib.layers.batch_norm(g_4, is_training=phase_train)
-        g_4 = tf.nn.relu(g_4)
-        
-        g_5 = tf.nn.conv3d_transpose(g_4, weights['wg5'], (batch_size,64,64,64,1), strides=strides, padding="SAME")
-        g_5 = tf.nn.bias_add(g_5, biases['bg5'])
-        g_5 = tf.nn.sigmoid(g_5)
+            g_4 = tf.nn.conv3d_transpose(g_3, weights['wg4'], (batch_size,32,32,32,64), strides=strides, padding="SAME")
+            g_4 = tf.nn.bias_add(g_4, biases['bg4'])
+            g_4 = tf.contrib.layers.batch_norm(g_4, is_training=phase_train)
+            g_4 = tf.nn.relu(g_4)
+            
+            g_5 = tf.nn.conv3d_transpose(g_4, weights['wg5'], (batch_size,64,64,64,1), strides=strides, padding="SAME")
+            g_5 = tf.nn.bias_add(g_5, biases['bg5'])
+            g_5 = tf.nn.sigmoid(g_5, name = "tanh")
 
-    print g_1, 'g1'
-    print g_2, 'g2'
-    print g_3, 'g3'
-    print g_4, 'g4'
-    print g_5, 'g5'
+    print (g_1, 'g1')
+    print (g_2, 'g2')
+    print (g_3, 'g3')
+    print (g_4, 'g4')
+    print (g_5, 'g5')
     
     return g_5
 
 def encoder(inputs, phase_train=True, reuse=False):
 
     strides    = [1,2,2,2,1]
-    with tf.variable_scope("dis"):
-        d_1 = tf.nn.conv3d(inputs, weights['wd1'], strides=strides, padding="SAME")
-        d_1 = tf.nn.bias_add(d_1, biases['bd1'])
-        d_1 = tf.contrib.layers.batch_norm(d_1, is_training=phase_train)                               
-        d_1 = lrelu(d_1, leak_value)
+    with tf.variable_scope("enc"):
+        with tf.device('/device:GPU:0'):
+            d_1 = tf.nn.conv3d(inputs, weights['wd1'], strides=strides, padding="SAME", name='init')
+            d_1 = tf.nn.bias_add(d_1, biases['bd1'])
+            d_1 = tf.contrib.layers.batch_norm(d_1, is_training=phase_train)                               
+            d_1 = lrelu(d_1, leak_value)
 
-        d_2 = tf.nn.conv3d(d_1, weights['wd2'], strides=strides, padding="SAME") 
-        d_2 = tf.nn.bias_add(d_2, biases['bd2'])
-        d_2 = tf.contrib.layers.batch_norm(d_2, is_training=phase_train)
-        d_2 = lrelu(d_2, leak_value)
-        
-        d_3 = tf.nn.conv3d(d_2, weights['wd3'], strides=strides, padding="SAME")  
-        d_3 = tf.nn.bias_add(d_3, biases['bd3'])
-        d_3 = tf.contrib.layers.batch_norm(d_3, is_training=phase_train)
-        d_3 = lrelu(d_3, leak_value) 
+            d_2 = tf.nn.conv3d(d_1, weights['wd2'], strides=strides, padding="SAME") 
+            d_2 = tf.nn.bias_add(d_2, biases['bd2'])
+            d_2 = tf.contrib.layers.batch_norm(d_2, is_training=phase_train)
+            d_2 = lrelu(d_2, leak_value)
+            
+            d_3 = tf.nn.conv3d(d_2, weights['wd3'], strides=strides, padding="SAME")  
+            d_3 = tf.nn.bias_add(d_3, biases['bd3'])
+            d_3 = tf.contrib.layers.batch_norm(d_3, is_training=phase_train)
+            d_3 = lrelu(d_3, leak_value) 
 
-        d_4 = tf.nn.conv3d(d_3, weights['wd4'], strides=strides, padding="SAME")     
-        d_4 = tf.nn.bias_add(d_4, biases['bd4'])
-        d_4 = tf.contrib.layers.batch_norm(d_4, is_training=phase_train)
-        d_4 = lrelu(d_4)
+            d_4 = tf.nn.conv3d(d_3, weights['wd4'], strides=strides, padding="SAME")     
+            d_4 = tf.nn.bias_add(d_4, biases['bd4'])
+            d_4 = tf.contrib.layers.batch_norm(d_4, is_training=phase_train)
+            d_4 = lrelu(d_4)
 
-        d_5 = tf.nn.conv3d(d_4, weights['wae_d'], strides=[1,1,1,1,1], padding="VALID")     
-        d_5 = tf.nn.bias_add(d_5, biases['bae_d'])
-        d_5 = tf.nn.sigmoid(d_5)
+            d_5 = tf.nn.conv3d(d_4, weights['wae_d'], strides=[1,1,1,1,1], padding="VALID")     
+            d_5 = tf.nn.bias_add(d_5, biases['bae_d'])
+            d_5 = tf.nn.sigmoid(d_5, name='tanh')
 
-    print d_5, 'ae5'
+    print (d_5, 'ae5')
 
     return d_5
 
@@ -109,36 +115,37 @@ def discriminator(inputs, phase_train=True, reuse=False):
 
     strides    = [1,2,2,2,1]
     with tf.variable_scope("dis", reuse=True):
-        d_1 = tf.nn.conv3d(inputs, weights['wd1'], strides=strides, padding="SAME")
-        d_1 = tf.nn.bias_add(d_1, biases['bd1'])
-        d_1 = tf.contrib.layers.batch_norm(d_1, is_training=phase_train)                               
-        d_1 = lrelu(d_1, leak_value)
+        with tf.device('/device:GPU:0'):
+            d_1 = tf.nn.conv3d(inputs, weights['wd1'], strides=strides, padding="SAME", name='input')
+            d_1 = tf.nn.bias_add(d_1, biases['bd1'])
+            d_1 = tf.contrib.layers.batch_norm(d_1, is_training=phase_train)                               
+            d_1 = lrelu(d_1, leak_value)
 
-        d_2 = tf.nn.conv3d(d_1, weights['wd2'], strides=strides, padding="SAME") 
-        d_2 = tf.nn.bias_add(d_2, biases['bd2'])
-        d_2 = tf.contrib.layers.batch_norm(d_2, is_training=phase_train)
-        d_2 = lrelu(d_2, leak_value)
-        
-        d_3 = tf.nn.conv3d(d_2, weights['wd3'], strides=strides, padding="SAME")  
-        d_3 = tf.nn.bias_add(d_3, biases['bd3'])
-        d_3 = tf.contrib.layers.batch_norm(d_3, is_training=phase_train)
-        d_3 = lrelu(d_3, leak_value) 
+            d_2 = tf.nn.conv3d(d_1, weights['wd2'], strides=strides, padding="SAME") 
+            d_2 = tf.nn.bias_add(d_2, biases['bd2'])
+            d_2 = tf.contrib.layers.batch_norm(d_2, is_training=phase_train)
+            d_2 = lrelu(d_2, leak_value)
+            
+            d_3 = tf.nn.conv3d(d_2, weights['wd3'], strides=strides, padding="SAME")  
+            d_3 = tf.nn.bias_add(d_3, biases['bd3'])
+            d_3 = tf.contrib.layers.batch_norm(d_3, is_training=phase_train)
+            d_3 = lrelu(d_3, leak_value) 
 
-        d_4 = tf.nn.conv3d(d_3, weights['wd4'], strides=strides, padding="SAME")     
-        d_4 = tf.nn.bias_add(d_4, biases['bd4'])
-        d_4 = tf.contrib.layers.batch_norm(d_4, is_training=phase_train)
-        d_4 = lrelu(d_4)
+            d_4 = tf.nn.conv3d(d_3, weights['wd4'], strides=strides, padding="SAME")     
+            d_4 = tf.nn.bias_add(d_4, biases['bd4'])
+            d_4 = tf.contrib.layers.batch_norm(d_4, is_training=phase_train)
+            d_4 = lrelu(d_4)
 
-        d_5 = tf.nn.conv3d(d_4, weights['wd5'], strides=[1,1,1,1,1], padding="VALID")     
-        d_5 = tf.nn.bias_add(d_5, biases['bd5'])
-        d_5 = tf.contrib.layers.batch_norm(d_5, is_training=phase_train)
-        d_5 = tf.nn.sigmoid(d_5)
+            d_5 = tf.nn.conv3d(d_4, weights['wd5'], strides=[1,1,1,1,1], padding="VALID")     
+            d_5 = tf.nn.bias_add(d_5, biases['bd5'])
+            d_5 = tf.contrib.layers.batch_norm(d_5, is_training=phase_train)
+            d_5 = tf.nn.sigmoid(d_5, name='tanh')
 
-    print d_1, 'd1'
-    print d_2, 'd2'
-    print d_3, 'd3'
-    print d_4, 'd4'
-    print d_5, 'd5'
+    print (d_1, 'd1')
+    print (d_2, 'd2')
+    print (d_3, 'd3')
+    print (d_4, 'd4')
+    print (d_5, 'd5')
 
     return d_5
 
@@ -179,6 +186,44 @@ def initialiseBiases():
     biases['bd5'] = tf.get_variable("bd5", shape=[1], initializer=zero_init) 
 
     return biases
+
+########################################################################################################################
+# Export the frozen graph for later use in Unity
+def export_model(saver, sess, input_node_names, output_node_name):
+    model_name = "3dgan"
+    if not os.path.exists('out'):
+        os.mkdir('out')
+
+    # save global and local variables
+    # sess.saver = tf.train.Saver(tf.global_variables())
+
+    #new write graph with weights
+    tf.train.write_graph(sess.graph_def, 'out', model_name + '_graph.pb', as_text=False)
+
+    saver.save(sess, 'out/' + model_name + '.ckpt')
+
+    freeze_graph.freeze_graph('out/' + model_name + '_graph.pb', None, True,
+                              'out/' + model_name + '.ckpt', output_node_name,
+                              "asd", "sadas", # these two dont even used
+                              'out/frozen_' + model_name + '.bytes', True, "")
+
+    # read from the frozen graph (!!Deleted devices!!)
+    input_graph_def = tf.GraphDef()
+    with tf.gfile.Open('out/frozen_' + model_name + '.bytes', "rb") as f:
+        input_graph_def.ParseFromString(f.read())
+
+    output_graph_def = convert_variables_to_constants(sess, input_graph_def, [output_node_name])
+    # output_graph_def = convert_variables_to_constants(sess, sess.graph_def, [output_node_name])
+
+    output_graph_def = optimize_for_inference_lib.optimize_for_inference(
+            output_graph_def, input_node_names, [output_node_name],
+            tf.float32.as_datatype_enum)
+
+    with tf.gfile.GFile('out/opt_' + model_name + '.bytes', "wb") as f:
+        f.write(output_graph_def.SerializeToString())
+
+    print("graph saved!")
+##################################################
 
 def trainGAN(is_dummy=False, exp_id=None):
 
@@ -258,10 +303,10 @@ def trainGAN(is_dummy=False, exp_id=None):
         z_sample = np.random.normal(0, 0.33, size=[batch_size, z_size]).astype(np.float32)
         if is_dummy:
             volumes = np.random.randint(0,2,(batch_size,cube_len,cube_len,cube_len))
-            print 'Using Dummy Data'
+            print ('Using Dummy Data')
         else:
             volumes = d.getAll(obj=obj, train=True, is_local=is_local, obj_ratio=obj_ratio)
-            print 'Using ' + obj + ' Data'
+            print ('Using ' + obj + ' Data')
         volumes = volumes[...,np.newaxis].astype(np.float) 
 
         for epoch in range(n_ae_epochs):
@@ -270,10 +315,10 @@ def trainGAN(is_dummy=False, exp_id=None):
 
             # Autoencoder pretraining
             # ae_l, mse_l, l2_l, _ = sess.run([ae_loss, mse_loss, l2_loss, optimizer_ae],feed_dict={x_vector:x})
-            # print 'Autoencoder Training ', "epoch: ",epoch, 'ae_loss:', ae_l, 'mse_loss:', mse_l, 'l2_loss:', l2_l
+            # print ('Autoencoder Training ', "epoch: ",epoch, 'ae_loss:', ae_l, 'mse_loss:', mse_l, 'l2_loss:', l2_l)
 
             ae_l, mse_l, _ = sess.run([ae_loss, mse_loss, optimizer_ae],feed_dict={x_vector:x})
-            print 'Autoencoder Training ', "epoch: ",epoch, 'ae_loss:', ae_l, 'mse_loss:', mse_l
+            print ('Autoencoder Training ', "epoch: ",epoch, 'ae_loss:', ae_l, 'mse_loss:', mse_l)
 
             # output generated chairs
             if epoch % ae_inter == 10:
@@ -301,14 +346,14 @@ def trainGAN(is_dummy=False, exp_id=None):
             summary_d, discriminator_loss = sess.run([d_summary_merge,d_loss],feed_dict={z_vector:z, x_vector:x})
             summary_g, generator_loss = sess.run([summary_g_loss,g_loss],feed_dict={z_vector:z})  
             d_accuracy, n_x, n_z = sess.run([d_acc, n_p_x, n_p_z],feed_dict={z_vector:z, x_vector:x})
-            print n_x, n_z
+            print (n_x, n_z)
 
             if d_accuracy < d_thresh:
                 sess.run([optimizer_op_d],feed_dict={z_vector:z, x_vector:x})
-                print 'Discriminator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy
+                print ('Discriminator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy)
 
             sess.run([optimizer_op_g],feed_dict={z_vector:z})
-            print 'Generator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy
+            print ('Generator Training ', "epoch: ",epoch,', d_loss:',discriminator_loss,'g_loss:',generator_loss, "d_acc: ", d_accuracy)
 
             # output generated chairs
             if epoch % gan_inter == 10:
@@ -321,6 +366,7 @@ def trainGAN(is_dummy=False, exp_id=None):
                 if not os.path.exists(model_directory):
                     os.makedirs(model_directory)      
                 saver.save(sess, save_path = model_directory + '/' + str(epoch) + '.cptk')
+                export_model(saver, sess, ["gen/init"], "gen/tanh")
 
 if __name__ == '__main__':
     is_dummy = bool(int(sys.argv[1]))

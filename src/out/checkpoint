@@ -1,6 +1,2 @@
-model_checkpoint_path: "3dgan.ckpt"
-all_model_checkpoint_paths: "..\\models\\biasfree_910.ckpt"
-all_model_checkpoint_paths: "..\\models\\biasfree_1210.ckpt"
-all_model_checkpoint_paths: "..\\models\\biasfree_1510.ckpt"
-all_model_checkpoint_paths: "..\\models\\biasfree_1810.ckpt"
-all_model_checkpoint_paths: "3dgan.ckpt"
+model_checkpoint_path: "stairs_3dgan_gpu.ckpt"
+all_model_checkpoint_paths: "stairs_3dgan_gpu.ckpt"
